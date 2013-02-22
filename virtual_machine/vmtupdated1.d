@@ -1,15 +1,16 @@
 import std.stdio, std.string, std.conv, std.array, std.algorithm;
 
+enum Type { ARITHMETIC, MEMORY, LABEL, GOTO, FUNCTION, CALL, RETURN }
 string[string] operations_dict;
-int[string] type_dict;
+Type[string] type_dict;
 string[][string] vars_dict;
 string[] arithmetic, memory, comp_ops, unary_ops, binary_ops;
 string start, end, binary_template, unary_template,
 		comp_template, push_tail_template, push_const_template,
 		push_var_template, push_staticpointer_template,
-		pop_template, pop_staticpointer_template;
-int op_count, line_count;
-const TYPE_ARITHMETIC = 0, TYPE_MEMORY = 1;
+		pop_template, pop_staticpointer_template, filename,
+		label_template, goto_template, if_goto_template;
+int op_count, line_count, return_address_count;
 
 void build_dictionaries() {
 	vars_dict = ["this":["THIS","M"],
@@ -26,13 +27,13 @@ void build_dictionaries() {
 				   "eq":"JEQ", "leq":"JLE",
 				   "geq":"JGE"];
 
-	type_dict = ["add":TYPE_ARITHMETIC, "sub":TYPE_ARITHMETIC,
-				   "and":TYPE_ARITHMETIC, "or":TYPE_ARITHMETIC,
-				   "not":TYPE_ARITHMETIC, "neg":TYPE_ARITHMETIC,
-				   "lt":TYPE_ARITHMETIC, "gt":TYPE_ARITHMETIC,
-				   "eq":TYPE_ARITHMETIC, "leq":TYPE_ARITHMETIC,
-				   "geq":TYPE_ARITHMETIC, 
-				   "push":TYPE_MEMORY, "pop":TYPE_MEMORY];
+	type_dict = ["add":Type.ARITHMETIC, "sub":Type.ARITHMETIC, "and":Type.ARITHMETIC, 
+				 "or":Type.ARITHMETIC, "not":Type.ARITHMETIC, "neg":Type.ARITHMETIC,
+				   "lt":Type.ARITHMETIC, "gt":Type.ARITHMETIC, "eq":Type.ARITHMETIC, 
+				   "leq":Type.ARITHMETIC, "geq":Type.ARITHMETIC, "label":Type.LABEL,
+				   "goto":Type.GOTO, "if-goto":Type.GOTO, "push":Type.MEMORY, 
+				   "pop":Type.MEMORY, "function":Type.FUNCTION, "call":Type.CALL,
+				   "return":Type.RETURN];
 
 	binary_ops = ["add", "sub", "and", "or"];
 	unary_ops = ["not", "neg"];
@@ -105,11 +106,22 @@ void build_strings() {
 	"D=M\n"
 	"@%s\n"
 	"M=D\n";
+
+	label_template = "(%s_%s)\n";
+	goto_template = "@%s_%s\n0;JMP\n";
+	if_goto_template = "@SP\n"
+	"AM=M-1\n"
+	"D=M\n"
+	"@%s_%s\n"
+	"D;JNE\n";
+
+
 }
 
 void init() {
 	op_count = 0;
 	line_count = 0;
+	return_address_count = 0;
 	build_strings();
 	build_dictionaries();
 }
@@ -120,11 +132,22 @@ string compile_operation(string op) {
 	string operation = op.split()[0];
 	string header = "// '" ~ op ~  "' (line " ~ to!string(line_count) ~ ")\n";
 	++line_count;
-
-	if (type_dict[operation] == TYPE_ARITHMETIC)
+	if (type_dict[operation] == Type.ARITHMETIC)
 		return header ~ compile_arithmetic(op);
-	else
+	else if (type_dict[operation] == Type.MEMORY)
 		return header ~ compile_memory(op);
+	else if (type_dict[operation] == Type.GOTO)
+		return header ~ compile_goto(op);
+	else if (type_dict[operation] == Type.LABEL)
+		return header ~ compile_label(op);
+	else if (type_dict[operation] == Type.FUNCTION)
+		return header ~ compile_function(op);
+	else if (type_dict[operation] == Type.CALL)
+		return header ~ compile_call(op);
+	else if (type_dict[operation] == Type.RETURN)
+		return header ~ compile_return();
+	else
+		throw new Exception("Unrecognized instruction");
 }
 
 string compile_arithmetic(string op) {
@@ -140,10 +163,9 @@ string compile_arithmetic(string op) {
 }
 
 string compile_memory(string op) {
-	string[] instructions = op.split();
-	string inst = instructions[0];
-	string argtype = instructions[1];
-	int val = to!int(instructions[2]);
+	string inst = op.split()[0];
+	string argtype = op.split()[1];
+	int val = to!int(op.split()[2]);
 	if (inst == "push") {
 		if (argtype == "constant") {
 			return format(push_const_template, val);
@@ -174,22 +196,84 @@ string compile_memory(string op) {
 	}
 }
 
+string compile_label(string op) {
+	string label = op.split()[1];
+	return format(label_template, label, filename);
+}
+
+string compile_goto(string op) {
+	string inst = op.split()[0];
+	string dest = op.split()[1];
+	if (inst == "goto")
+		return format(goto_template, dest, filename);
+	else
+		return format(if_goto_template, dest, filename);
+}
+
+string compile_function(string op) {
+	string function_name = op.split()[1];
+	int num_local_vars = to!int(op.split()[2]);
+	string output = format(label_template, function_name, filename);
+	for (int i=0; i<num_local_vars; ++i)
+		output ~= format(push_const_template, 0);
+	return output;
+}
+
+string compile_call(string op) {
+	string function_name = op.split()[1];
+	int num_args = to!int(op.split()[2]);
+	//make return address label
+	string return_address = format("RET_ADDR_%s", return_address_count++);
+	//push return address
+	string output = format(push_const_template, return_address);
+	//push ARG, LCL, THIS, THAT
+	output ~= "@ARG\nD=M\n" ~ push_tail_template ~
+			  "@LCL\nD=M\n" ~ push_tail_template ~
+			  "@THIS\nD=M\n" ~ push_tail_template ~
+			  "@THAT\nD=M\n" ~ push_tail_template;
+	//ARG = SP - num_args - 5
+	output ~= format("@SP\nD=M\n@%s\nD=D-A\n@5\nD=D-A\n@ARG\nM=D\n", num_args);
+	//LCL = SP
+	output ~= "@SP\nD=M\n@LCL\nM=D\n";
+	// goto function
+	output ~= format(goto_template, function_name, filename);
+	// put in a label for after the function
+	output ~= format(label_template, return_address, filename);
+	return output;
+}
+
+string compile_return() {
+	string output = "@LCL\nD=M\n@FRAME\nM=D\n"; // FRAME = LCL
+	output ~= "@SP\nAM=M-1\nD=M\n@ARG\nA=M\nM=D\n"; // *(ARG) = pop()
+	output ~= "@ARG\nD=M+1\n@SP\nM=D\n"; // SP = ARG + 1
+	foreach (ptr; ["THAT", "THIS", "ARG", "LCL", "RET"]) //set environment pointers
+		output ~= format ("@FRAME\nAM=M-1\nD=M\n@%s\nM=D\n", ptr);
+	output ~= "@RET\nA=M\n0;JMP\n"; //goto ret
+	return output;
+}
+
 void main(string args[]) {
 	init();
 	if (args.length < 2) {
 		writefln("usage: %s <filename>", args[0]);
 		return;
 	}
-	string inputfname = args[1];
-	string outputfname = args[1].split(".")[0] ~ ".asm";
 
-	auto inputf = File(inputfname, "r");
 	auto output = appender!string("// Assembly file generated by my awesome VM compiler\n");
-	output.put(format("// Input filename: %s\n", inputfname));
-	foreach (line; inputf.byLine) {
-		output.put(compile_operation(to!string(line).strip));
+	string outputfname;
+	for (int i=1; i<args.length; ++i) {
+		string inputfname = args[i];
+		filename = args[i].split(".")[0];
+		outputfname = filename ~ ".asm";
+
+		auto inputf = File(inputfname, "r");
+		output.put(format("// Input filename: %s\n", inputfname));
+		foreach (line; inputf.byLine) {
+			string input_line = to!string(line).split("//")[0].strip;
+			output.put(compile_operation(input_line));
+		}
+		inputf.close();
 	}
-	inputf.close();
 
 	auto outputf = File(outputfname, "w");
 	outputf.write(output.data);
