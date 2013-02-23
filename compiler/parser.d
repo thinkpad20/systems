@@ -4,22 +4,23 @@ enum TokenType {
 	KW, SYM, INTCONST, STRCONST, IDENT, WS, NONE
 }
 
-struct TokenMatch {
+struct Token {
 	string symbol;
-	TokenType token;
+	TokenType type;
 	this(string sym, TokenType t) {
 		this.symbol = sym;
-		this.token = t;
+		this.type = t;
 	}
 	string toString() {
-		return format("%s : %s", symbol, token);
+		return format("%s : %s", symbol, type);
 	}
 }
 
-TokenMatch[] tokens;
+Token[] tokens;
 int[string] keywords, symbols;
 int[char] identFirstChar, identOtherChars, numbers;
-int lineNumber;
+int lineNumber, indentAmount;
+string[TokenType] tokenXMLTemplates;
 
 bool matchIdent(string str) {
 	if (!str) return false;
@@ -75,7 +76,7 @@ int lexLine(string line) {
 				return lineNumber;	 // the previous statement was illegal, so there was some illegal input.
 			}
 			if (bestType != TokenType.WS) // if it's not whitespace, we record it
-				tokens ~= TokenMatch(prev, bestType);
+				tokens ~= Token(prev, bestType);
 			current = to!string(c);
 			prev = "";
 		}
@@ -85,12 +86,13 @@ int lexLine(string line) {
 	//have to do it on the very last character.
 	bestType = bestMatch(current);
 	if (bestType != TokenType.WS && bestType != TokenType.NONE)
-		tokens ~= TokenMatch(prev, bestType);
+		tokens ~= Token(prev, bestType);
 
 	return -1; // -1 indicates success
 }
 
 void init() {
+	/* For lexing */
 	string[] keywordList = ["class", "constructor", "function", "method", 
 			 "field", "static", "var", "int", "char", "boolean",
 			 "void", "true", "false", "null", "this", "let",
@@ -110,13 +112,49 @@ void init() {
 		identOtherChars[ch] = 0;
 	foreach (ch; digits)
 		numbers[ch] = 0;
+
+	/* For parsing */
+	tokenXMLTemplates = [TokenType.KW:"<keyword> %s </keyword>",
+						 TokenType.IDENT:"<identifier> %s </identifier>",
+						 TokenType.SYM:"<symbol> %s </symbol>",
+						 TokenType.INTCONST:"<integerConstant> %s </integerConstant>",
+						 TokenType.STRCONST:"<stringConstant> %s </stringConstant>"];
+
 }
+
+
+string ind(string str) {
+	string res = "";
+	for (int i=0; i<indentAmount; ++i)
+		res ~= "  ";
+	return res ~ str;
+}
+
+string compileTerminal(Token token) {
+	return ind(format(tokenXMLTemplates[token.type], token.symbol));
+}
+
+string compileLetStatement(Token[] tokens) {
+	string res = ind("<letStatement>");
+	++indent;
+	res ~= compileTerminal(tokens[0]);
+	/* At this point we need to figure out if the next symbol is an
+	   regular variable or an array. */
+	if (tokens[2] == "=")
+		res ~= compileTerminal(tokens[1])
+
+	--indent;
+	res ~= ind("</letStatement>");
+}
+
+
+
 
 void main() {
 	init();
 	string test = "while (i < 5*j) {i = i+1;}";
 	parseLine(test);
-	foreach(TokenMatch m; tokens) {
+	foreach(Token m; tokens) {
 		writeln(m);
 	}
 }

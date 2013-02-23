@@ -1,16 +1,28 @@
-import std.stdio, tokenTrie, std.regex;
+import std.stdio, std.algorithm;
 
-
-bool match_str(string str) {
-	return str[0] == '"' && str[$-1] == '"';
+bool isPrefixMatch(string[] tokens, string[][] replacements) {
+	foreach (rep; replacements) {
+		if (rep.length >= tokens.length) {
+			bool match = true;
+			for (int i=0; i<tokens.length; ++i) {
+				if (tokens[i] != rep[i])
+					match = false;
+			}
+			if (match)
+				return true;
+		}
+	}
+	return false;
 }
 
-void main(string[] args) {
-	string test = "  ";
-	auto ident_match = match(test, regex(r"[a-zA-Z_][a-zA-Z0-9_]*"));
-	auto ws_match = match(test, regex(r"[ \n\r\t]+"));
-	if (ws_match.hit == test)
-		writeln("yes");
-	else
-		writeln("no");
+void main() {
+	string[][] reps = [["a", "b", "c"],
+					   ["d", "g"],
+					   ["k", "i", "p"]];
+	string[] tokens = ["k", "i", "p"];
+	writeln(isPrefixMatch(tokens, reps));
 }
+
+//int i=2;
+//	bool isLongEnough (string[] slist) {return slist.length > i;}
+//	auto pliss = filter!(isLongEnough)(reps);
