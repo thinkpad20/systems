@@ -21,7 +21,7 @@ int[string] keywords, symbols;
 int[char] identFirstChar, identOtherChars, numbers;
 int lineNumber;
 
-bool match_ident(string str) {
+bool matchIdent(string str) {
 	if (!str) return false;
 	if (!(str[0] in identFirstChar)) { return false; }
 	for (int i=1; i<str.length; ++i)
@@ -29,7 +29,7 @@ bool match_ident(string str) {
 	return true;
 }
 
-bool match_num(string str) {
+bool matchNum(string str) {
 	if (!str || str == "-") return false;
 	if (!((str[0] in numbers) || str[0] == '-')) return false;
 	for (int i=1; i<str.length; ++i)
@@ -37,7 +37,7 @@ bool match_num(string str) {
 	return true;
 }
 
-bool match_ws(string str) {
+bool matchWhiteSpace(string str) {
 	foreach(ch; str)
 		if (ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
 			return false;
@@ -49,19 +49,19 @@ TokenType bestMatch(string token) {
 		return TokenType.KW;
 	else if (token in symbols)
 		return TokenType.SYM;
-	else if (match_num(token))
+	else if (matchNum(token))
 		return TokenType.INTCONST;
 	else if (token[0] == '"' && token[$-1] == '"')
 		return TokenType.STRCONST;
-	else if (match_ident(token))
+	else if (matchIdent(token))
 		return TokenType.IDENT;
-	else if (match_ws(token))
+	else if (matchWhiteSpace(token))
 		return TokenType.WS;
 	else
 		return TokenType.NONE;
 }
 
-void parseLine(string line) {
+int lexLine(string line) {
 	int cursor; // keeps track of our position in the line
 	writeln("Input: ", line);
 	string current = "", prev = "";
@@ -72,7 +72,7 @@ void parseLine(string line) {
 		if (bestMatch(current) == TokenType.NONE) { // then we've encountered an illegal expression
 			if (bestType == TokenType.NONE) { //bestType stored the type of the previous expression
 				writeln("Error: unknown token type on line %s", lineNumber); // if none, this means
-				return;	 // the previous statement was illegal, so there was some illegal input.
+				return lineNumber;	 // the previous statement was illegal, so there was some illegal input.
 			}
 			if (bestType != TokenType.WS) // if it's not whitespace, we record it
 				tokens ~= TokenMatch(prev, bestType);
@@ -86,6 +86,8 @@ void parseLine(string line) {
 	bestType = bestMatch(current);
 	if (bestType != TokenType.WS && bestType != TokenType.NONE)
 		tokens ~= TokenMatch(prev, bestType);
+
+	return -1; // -1 indicates success
 }
 
 void init() {
