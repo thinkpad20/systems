@@ -1,4 +1,4 @@
-import std.stdio, std.string, std.conv, std.regex;
+import std.stdio, std.string, std.conv;
 
 enum TokenType {
 	KW, SYM, INTCONST, STRCONST, IDENT, WS, NONE
@@ -18,38 +18,63 @@ struct TokenMatch {
 
 TokenMatch[] tokens;
 int[string] keywords, symbols;
+int[char] identFirstChar, identOtherChars, numbers;
+int lineNumber;
+
+bool match_ident(string str) {
+	if (!str) return false;
+	if (!(str[0] in identFirstChar)) { return false; }
+	for (int i=1; i<str.length; ++i)
+		if (!(str[i] in identOtherChars)) { return false; }
+	return true;
+}
+
+bool match_num(string str) {
+	if (!str || str == "-") return false;
+	if (!((str[0] in numbers) || str[0] == '-')) return false;
+	for (int i=1; i<str.length; ++i)
+		if (!(str[i] in numbers)) { return false; }
+	return true;
+}
+
+bool match_ws(string str) {
+	foreach(ch; str)
+		if (ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
+			return false;
+	return true;
+}
 
 TokenType bestMatch(string token) {
-	auto num_match = match(token, regex(r"-?[0-9]+"));
-	auto ident_match = match(token, regex(r"[a-zA-Z_][a-zA-Z0-9_]*"));
-	auto ws_match = match(token, regex(r"[ \n\r\t]+"));
 	if (token in keywords)
 		return TokenType.KW;
 	else if (token in symbols)
 		return TokenType.SYM;
-	else if (num_match && num_match.hit == token)
+	else if (match_num(token))
 		return TokenType.INTCONST;
 	else if (token[0] == '"' && token[$-1] == '"')
 		return TokenType.STRCONST;
-	else if (ident_match && ident_match.hit == token)
+	else if (match_ident(token))
 		return TokenType.IDENT;
-	else if (ws_match && ws_match.hit == token)
+	else if (match_ws(token))
 		return TokenType.WS;
 	else
 		return TokenType.NONE;
 }
 
 void parseLine(string line) {
-	int cursor;
+	int cursor; // keeps track of our position in the line
 	writeln("Input: ", line);
 	string current = "", prev = "";
 	TokenType bestType = TokenType.NONE;
 	for (cursor = 0; cursor < line.length; ++cursor) {
 		char c = line[cursor];
-		//writefln("current: '%s' c: %s, bestType: %s", current, c, bestType);
-		current ~= c;
-		if (bestMatch(current) == TokenType.NONE) {
-			if (bestType != TokenType.WS)
+		current ~= c; // append next character onto our working token
+		if (bestMatch(current) == TokenType.NONE) { // then we've encountered an illegal expression
+			if (bestType == TokenType.NONE) { //bestType stored the type of the previous expression
+				writeln("Error: unknown token type on line %s", lineNumber); // if none, this means
+				return;	 // the previous statement was illegal, so there was some illegal input.
+			}
+			if (bestType != TokenType.WS) // if it's not whitespace, we record it
 				tokens ~= TokenMatch(prev, bestType);
 			current = to!string(c);
 			prev = "";
@@ -73,6 +98,16 @@ void init() {
 	string[] symbolList = ["{", "}", "(", ")", "[", "]", ".", ",", ";",
 							"+", "-", "*", "/", "&", "|", "<", ">", "=", "~"];
 	foreach (sym; symbolList) { symbols[sym] = 0; }
+
+	string lowerCase = "abcdefghijklmnopqrstuvwxyz_";
+	string upperCase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	string digits = "0123456789";
+	foreach (ch; lowerCase ~ upperCase)
+		identFirstChar[ch] = 0;
+	foreach (ch; lowerCase ~ upperCase ~ digits)
+		identOtherChars[ch] = 0;
+	foreach (ch; digits)
+		numbers[ch] = 0;
 }
 
 void main() {
