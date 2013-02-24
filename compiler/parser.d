@@ -1,26 +1,58 @@
-import std.stdio, std.string, std.conv;
+import std.stdio, std.string, std.conv, std.algorithm;
 
-enum TokenType {
-	KW, SYM, INTCONST, STRCONST, IDENT, WS, NONE
+enum TokenCat {
+	KW, SYM, INTCONST, STRCONST, IDENT, WS, NONE, PARTIALSTRING, COMMENT, PARTIALCOMMENT
+}
+
+enum TokenType { _class_, constructor_, _function_, _method_,
+			 _field_, _static_, _var_, _int_, _char_, _boolean_,
+			 _void_, _true_, _false_, _null_, _this_, _let_,
+			 _do_, _if_, _else_, _while_, _return_
 }
 
 struct Token {
 	string symbol;
+	TokenCat category;
 	TokenType type;
-	this(string sym, TokenType t) {
+	int val;
+	string str;
+	string[TokenCat] descriptions;
+	//constructor for keyword or identifier tokens
+	this(string sym, TokenCat cat) {
+		descriptions = [TokenCat.KW:"keyword", TokenCat.IDENT:"identifier",
+						 TokenCat.SYM:"symbol", TokenCat.INTCONST:"integerConstant",
+						 TokenCat.STRCONST:"stringConstant"];
 		this.symbol = sym;
-		this.type = t;
+		this.category = cat;
+		if (cat == TokenCat.INTCONST)
+			this.val = to!int(sym);
+		if (cat == TokenCat.STRCONST)
+			this.str = sym[1..$-1];
+
 	}
+
+	string getXML() {
+		if (category == TokenCat.STRCONST)
+			return format("<%s> %s </%s>", descriptions[category], str, descriptions[category]);
+		if (category == TokenCat.INTCONST)
+			return format("<%s> %s </%s>", descriptions[category], val, descriptions[category]);
+		if (symbol == "<")
+			return format("<%s> &lt; </%s>", descriptions[category], descriptions[category]);
+		if (symbol == ">")
+			return format("<%s> &gt; </%s>", descriptions[category], descriptions[category]);
+		if (symbol == "&")
+			return format("<%s> &amp; </%s>", descriptions[category], descriptions[category]);
+		return format("<%s> %s </%s>", descriptions[category], symbol, descriptions[category]);
+	}
+
 	string toString() {
-		return format("%s : %s", symbol, type);
+		return symbol ~ " (" ~ descriptions[category] ~ ")";
 	}
 }
 
-Token[] tokens;
 int[string] keywords, symbols;
 int[char] identFirstChar, identOtherChars, numbers;
 int lineNumber, indentAmount;
-string[TokenType] tokenXMLTemplates;
 
 bool matchIdent(string str) {
 	if (!str) return false;
@@ -45,50 +77,63 @@ bool matchWhiteSpace(string str) {
 	return true;
 }
 
-TokenType bestMatch(string token) {
+
+TokenCat bestMatch(string token) {
 	if (token in keywords)
-		return TokenType.KW;
+		return TokenCat.KW;
 	else if (token in symbols)
-		return TokenType.SYM;
+		return TokenCat.SYM;
 	else if (matchNum(token))
-		return TokenType.INTCONST;
+		return TokenCat.INTCONST;
 	else if (token[0] == '"' && token[$-1] == '"')
-		return TokenType.STRCONST;
+		return TokenCat.STRCONST;
+	else if (token[0] == '"' && !canFind(token[1..$-1], '"'))
+		return TokenCat.PARTIALSTRING; // this will never be a terminal type
 	else if (matchIdent(token))
-		return TokenType.IDENT;
+		return TokenCat.IDENT;
+	else if (token.length >= 4 && token[0..2] == "/*" && token[$-2..$] == "*/")
+		return TokenCat.COMMENT;
+	else if (token.length >= 2 && token[0..2] == "/*" && token.split("*/")[0] == token)
+		return TokenCat.PARTIALCOMMENT;
 	else if (matchWhiteSpace(token))
-		return TokenType.WS;
+		return TokenCat.WS;
 	else
-		return TokenType.NONE;
+		return TokenCat.NONE;
 }
 
-int lexLine(string line) {
+Token[] lexLine(string line) {
+	Token[] tokens;
 	int cursor; // keeps track of our position in the line
-	writeln("Input: ", line);
+	writeln("Input:\n", line);
 	string current = "", prev = "";
-	TokenType bestType = TokenType.NONE;
+	TokenCat bestCat = TokenCat.NONE;
 	for (cursor = 0; cursor < line.length; ++cursor) {
 		char c = line[cursor];
 		current ~= c; // append next character onto our working token
-		if (bestMatch(current) == TokenType.NONE) { // then we've encountered an illegal expression
-			if (bestType == TokenType.NONE) { //bestType stored the type of the previous expression
-				writeln("Error: unknown token type on line %s", lineNumber); // if none, this means
-				return lineNumber;	 // the previous statement was illegal, so there was some illegal input.
+		if (bestMatch(current) == TokenCat.NONE) { // then we've encountered an illegal expression
+			if (bestCat == TokenCat.NONE) { //bestCat stored the type of the previous expression
+				throw new Exception(format("Error: illegal input on line %s", lineNumber)); // if none, this means
+				// the previous statement was illegal, so there was some illegal input.
 			}
-			if (bestType != TokenType.WS) // if it's not whitespace, we record it
-				tokens ~= Token(prev, bestType);
+			if (bestCat != TokenCat.WS && bestCat != TokenCat.COMMENT) // if it's not comment or ws, we record it
+				tokens ~= Token(prev, bestCat);
 			current = to!string(c);
 			prev = "";
 		}
-		bestType = bestMatch(current);
+		bestCat = bestMatch(current);
 		prev = current;
 	}
-	//have to do it on the very last character.
-	bestType = bestMatch(current);
-	if (bestType != TokenType.WS && bestType != TokenType.NONE)
-		tokens ~= Token(prev, bestType);
+	//we now have to do it on the very last character.
+	bestCat = bestMatch(current);
+	if (bestCat != TokenCat.WS && bestCat != TokenCat.NONE)
+		if (bestCat == TokenCat.PARTIALSTRING)
+			throw new Exception("Error: unbounded string constant.");
+		else if (bestCat == TokenCat.PARTIALCOMMENT)
+			throw new Exception("Error: unbounded comment.");
+		else
+			tokens ~= Token(prev, bestCat);
 
-	return -1; // -1 indicates success
+	return tokens;
 }
 
 void init() {
@@ -112,49 +157,46 @@ void init() {
 		identOtherChars[ch] = 0;
 	foreach (ch; digits)
 		numbers[ch] = 0;
-
-	/* For parsing */
-	tokenXMLTemplates = [TokenType.KW:"<keyword> %s </keyword>",
-						 TokenType.IDENT:"<identifier> %s </identifier>",
-						 TokenType.SYM:"<symbol> %s </symbol>",
-						 TokenType.INTCONST:"<integerConstant> %s </integerConstant>",
-						 TokenType.STRCONST:"<stringConstant> %s </stringConstant>"];
-
 }
 
-
-string ind(string str) {
+string indent(string str) {
 	string res = "";
 	for (int i=0; i<indentAmount; ++i)
 		res ~= "  ";
 	return res ~ str;
 }
 
-string compileTerminal(Token token) {
-	return ind(format(tokenXMLTemplates[token.type], token.symbol));
-}
-
-string compileLetStatement(Token[] tokens) {
-	string res = ind("<letStatement>");
-	++indent;
-	res ~= compileTerminal(tokens[0]);
-	/* At this point we need to figure out if the next symbol is an
-	   regular variable or an array. */
-	if (tokens[2] == "=")
-		res ~= compileTerminal(tokens[1])
-
-	--indent;
-	res ~= ind("</letStatement>");
-}
-
-
-
-
-void main() {
-	init();
-	string test = "while (i < 5*j) {i = i+1;}";
-	parseLine(test);
-	foreach(Token m; tokens) {
-		writeln(m);
+string prepare(string filename) {
+	string[] lines;
+	string noComments;
+	auto file = File(filename, "r");
+	foreach (line; file.byLine)
+		lines ~= to!string(line);
+	foreach (line; lines) {
+		string strippedLine = line.split("//")[0];
+		noComments ~= strippedLine ~ "\n";
 	}
+	return noComments;
+}
+
+void writeTokens(Token[] tokens, string filename) {
+	auto file = File(filename, "w");
+	file.writeln("<tokens>");
+	foreach (token; tokens)
+		file.writeln(token.getXML());
+	file.writeln("</tokens>");
+	file.close();
+}
+
+void main(string args[]) {
+	init();
+	if (args.length == 1) {
+		writefln("usage: %s <jack file(s)>", args[0]);
+		return;
+	}
+	string preparedString = prepare(args[1]);
+	Token[] tokens = lexLine(preparedString);
+	//string test = "while (int i < 5*j) {string s = \"hello;\"}";
+	//Token[] tokens = lexLine(test);
+	writeTokens(tokens, args[2]);
 }
