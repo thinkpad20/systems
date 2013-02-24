@@ -14,6 +14,10 @@ void init() {
 				Token(";", TokenCat.SYM),];
 }
 
+void report(string location = "") {
+	writefln("%s next = %s,  tokens[next] = %s", location, next, tokens[next]);
+}
+
 /* <FORMATTING FUNCTIONS> */
 string indent(string str) {
 	string res;
@@ -53,6 +57,11 @@ bool isOp(Token t) {
 	return canFind(ops, t.type);
 }
 
+bool isStatement(Token t) {
+	string[] statements = ["let", "if", "while", "do", "return"];
+	return canFind(statements, t.type);
+}
+
 /* </CHECKING FUNCTIONS> */
 
 Token demand(string type) {
@@ -70,6 +79,8 @@ Token demandOneOf(string[] types) {
 }
 
 void compileExpressionList() {
+	writeIndented("<expressionList>\n");
+	++indentation;
 	while (true) {
 		compileExpression();
 		if (term(tokens[next], ","))
@@ -77,18 +88,23 @@ void compileExpressionList() {
 		else
 			break;
 	}
+	--indentation;
+	writeIndented("</expressionList>\n");
 }
 
 void compileSubroutineCall() {
+	report("SRC0");
 	writeIndented("<subroutineCall>\n");
 	++indentation;
 	/* We have two possibilities here; either a regular function or a class method. */
 	if (term(tokens[next+1], ".")) {
+		report("SRC1");
 		writeXML(demand("identifier"));
 		writeXML(demand("."));
 	}
 	/* Both possibilities will need these 4 elements. 
 	A class method needs the above two as well. */
+	report("SRC2");
 	writeXML(demand("identifier"));
 	writeXML(demand("("));
 	compileExpressionList();
@@ -100,41 +116,55 @@ void compileSubroutineCall() {
 void compileTerm() {
 	writeIndented("<term>\n");
 	++indentation;
-	writeln("next = ", next, " tokens[next].type = ", tokens[next].type);
-	if (tokens[next].type == "integerConstant")
+	report("TERM0");
+	if (tokens[next].type == "integerConstant") {
+		report("TERM1");
 		writeXML(tokens[next++]);
-	else if (tokens[next].type == "stringConstant")
+	}
+	else if (tokens[next].type == "stringConstant") {
+		report("TERM2");
 		writeXML(tokens[next++]);
-	else if (isKeywordConstant(tokens[next]))
+	}
+	else if (isKeywordConstant(tokens[next])) {
+		report("TERM3");
 		writeXML(tokens[next++]);
+	}
 	else if (isUnaryOp(tokens[next])) {
+		report("TERM4");
 		writeXML(tokens[next++]);
 		compileTerm();
 	}
 	else if (term(tokens[next], "(")) {
+		report("TERM5");
 		writeXML(tokens[next++]);
 		compileExpression();
 		writeXML(demand(")"));
 	}
 	else if (term(tokens[next], "identifier")) {
+		report("TERM6");
+		writeln("lookahead: tokens[next+1] = ", tokens[next+1]);
 		/* Here we have three possibilities: a variable, array reference, or subroutine name */
 		/* First check for array reference */
 		if (term(tokens[next+1], "[")) { /* check if there's a [ */
+			report("TERM7");
 			writeXML(tokens[next++]); /* Write the variable */
 			writeXML(demand("[")); /* grab the [ (the demand is unnecessary, but...) */
 			compileExpression(); /* write the internal expression */
 			writeXML(demand("]")); /* and demand a ] */
 		}
 		/* Next check for a subroutine call */
-		else if (term(tokens[next+1], "(")) {
+		else if (term(tokens[next+1], "(") || term(tokens[next+1], ".")) {
+			report("TERM8");
 			compileSubroutineCall();
 		}
 		/* if it's neither one of those, it must be a variable */
 		else {
+			report("TERM9");
 			writeXML(tokens[next++]);
 		}
 	}
 	else if (term(tokens[next], "identifier") && term(tokens[next], "(")) {
+		report("TERM10");
 		compileSubroutineCall();
 	}
 	else {
@@ -146,10 +176,12 @@ void compileTerm() {
 }
 
 void compileExpression() {
+	report("EXP0");
 	writeIndented("<expression>\n");
 	++indentation;
 	compileTerm();
 	while (isOp(tokens[next])) {
+		report("EXP1");
 		writeXML(tokens[next++]);
 		compileTerm();
 	}
@@ -157,25 +189,7 @@ void compileExpression() {
 	writeIndented("</expression>\n");
 }
 
-void compileLetStatement() {
-	writeIndented("<letStatement>\n");
-	++indentation;
-	writeXML(demand("let"));
-	writeXML(demand("identifier"));
-	/* the identifier might have array brackets following. */
-	if (term(tokens[next], "[")) {
-		writeXML(demand("["));
-		compileExpression();
-		writeXML(demand("]"));
-	}
-	writeXML(demand("="));
-	compileExpression();
-	writeXML(demand(";"));
-	--indentation;
-	writeIndented("</letStatement>\n");
-}
-
-/* <TESTED COMPILATION FUNCTIONS> */
+/* <EXPRESSION COMPILERS> */
 void compileParameters() {
 	while (next < tokens.length && isType(tokens[next])) {
 		writeXML(tokens[next++]);
@@ -195,13 +209,119 @@ void compileParameterList() {
 	writeIndented("</parameterList>\n");
 }
 
-/* </TESTED COMPILATION FUNCTIONS> */
+/* </EXPRESSION COMPILERS> */
+
+/* <STATEMENT COMPILERS> */
+
+void compileStatements() {
+	writeIndented("<statements>\n");
+	++indentation;
+	while (true) {
+		if (term(tokens[next],"let"))
+			compileLetStatement();
+		else if (term(tokens[next], "if"))
+			compileIfStatement();
+		else if (term(tokens[next], "while"))
+			compileWhileStatement();
+		else if (term(tokens[next], "do"))
+			compileDoStatement();
+		else if (term(tokens[next], "return"))
+			compileReturnStatement();
+		else
+			throw new Exception("Error: statement expected but no valid keyword found.");
+
+		if (!isStatement(tokens[next]))
+			break;
+	}
+	--indentation;
+	writeIndented("</statements>\n");
+}
+
+void compileReturnStatement() {
+	writeIndented("<returnStatement>\n");
+	++indentation;
+	writeXML(demand("return"));
+	writeXML(demand(";"));
+	--indentation;
+	writeIndented("</returnStatement>\n");
+}
+
+void compileDoStatement() {
+	writeIndented("<doStatement>\n");
+	++indentation;
+	writeXML(demand("do"));
+	compileSubroutineCall();
+	writeXML(demand(";"));
+	--indentation;
+	writeIndented("</doStatement>\n");
+}
+
+void compileWhileStatement() {
+	writeIndented("<whileStatement>\n");
+	++indentation;
+	writeXML(demand("while"));
+	writeXML(demand("("));
+	compileExpression();
+	writeXML(demand(")"));
+	writeXML(demand("{"));
+	compileStatements();
+	writeXML(demand("}"));
+	--indentation;
+	writeIndented("</whileStatement>\n");
+}
+
+void compileLetStatement() {
+	writeIndented("<letStatement>\n");
+	++indentation;
+	report("LET1");
+	writeXML(demand("let"));
+	report("LET2");
+	writeXML(demand("identifier"));
+	/* the identifier might have array brackets following. */
+	if (term(tokens[next], "[")) {
+		report("LET3");
+		writeXML(demand("["));
+		compileExpression();
+		report("LET4");
+		writeXML(demand("]"));
+	}
+	writeXML(demand("="));
+	compileExpression();
+	report("LET5");
+	writeXML(demand(";"));
+	--indentation;
+	writeIndented("</letStatement>\n");
+}
+
+void compileIfStatement() {
+	writeIndented("<ifStatement>\n");
+	++indentation;
+	writeXML(demand("if"));
+	writeXML(demand("("));
+	compileExpression();
+	writeXML(demand(")"));
+	writeXML(demand("{"));
+	compileStatements();
+	writeXML(demand("}"));
+	if (term(token[next], "else")) {
+		writeXML(demand("else"));
+		writeXML(demand("{"));
+		compileStatements();
+		writeXML(demand("}"));
+	}
+	--indentation;
+	writeIndented("</ifStatement>\n");
+}
+
+/* </STATEMENT COMPILERS> */
 
 void main(string[] args) {
 	jackTokenizer jt;
 	jt.init();
-	jt.lex("let x[y + 2*z] = Class.function(5, 6);");
+	jt.lex("let x[y + 2*z] = Clss.func(5, 6);");
 	tokens = jt.getTokens();
+	foreach (i, token; tokens)
+		writeln(i, " ", token);
 	//init();
 	next = 0;
 	compileLetStatement();
