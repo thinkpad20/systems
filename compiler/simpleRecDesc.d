@@ -15,7 +15,10 @@ void init() {
 }
 
 void report(string location = "") {
-	writefln("%s next = %s,  tokens[next] = %s", location, next, tokens[next]);
+	if (next < tokens.length)
+		writefln("%s next = %s,  tokens[next] = %s", location, next, tokens[next]);
+	else
+		writefln("%s next = %s,  end of file", location, next);
 }
 
 /* <FORMATTING FUNCTIONS> */
@@ -28,6 +31,7 @@ string indent(string str) {
 
 void writeIndented(string str) {
 	outputLines ~= indent(str);
+	write(indent(str));
 }
 
 void writeXML(Token t) {
@@ -214,6 +218,7 @@ void compileParameterList() {
 /* <STATEMENT COMPILERS> */
 
 void compileStatements() {
+	report("BEGINSTATEMENTS");
 	writeIndented("<statements>\n");
 	++indentation;
 	while (true) {
@@ -229,24 +234,28 @@ void compileStatements() {
 			compileReturnStatement();
 		else
 			throw new Exception("Error: statement expected but no valid keyword found.");
-
-		if (!isStatement(tokens[next]))
+		report("STATEMENTS1");
+		if (next == tokens.length || !isStatement(tokens[next]))
 			break;
 	}
 	--indentation;
 	writeIndented("</statements>\n");
+	report("ENDSTATEMENTS");
 }
 
 void compileReturnStatement() {
+	report("BEGINRETURN");
 	writeIndented("<returnStatement>\n");
 	++indentation;
 	writeXML(demand("return"));
 	writeXML(demand(";"));
 	--indentation;
 	writeIndented("</returnStatement>\n");
+	report("ENDRETURN");
 }
 
 void compileDoStatement() {
+	report("BEGINDO");
 	writeIndented("<doStatement>\n");
 	++indentation;
 	writeXML(demand("do"));
@@ -254,9 +263,11 @@ void compileDoStatement() {
 	writeXML(demand(";"));
 	--indentation;
 	writeIndented("</doStatement>\n");
+	report("ENDDO");
 }
 
 void compileWhileStatement() {
+	report("BEGINWHILE");
 	writeIndented("<whileStatement>\n");
 	++indentation;
 	writeXML(demand("while"));
@@ -268,9 +279,11 @@ void compileWhileStatement() {
 	writeXML(demand("}"));
 	--indentation;
 	writeIndented("</whileStatement>\n");
+	report("ENDWHILE");
 }
 
 void compileLetStatement() {
+	report("BEGINLET");
 	writeIndented("<letStatement>\n");
 	++indentation;
 	report("LET1");
@@ -291,9 +304,11 @@ void compileLetStatement() {
 	writeXML(demand(";"));
 	--indentation;
 	writeIndented("</letStatement>\n");
+	report("ENDLET");
 }
 
 void compileIfStatement() {
+	report("BEGINIF");
 	writeIndented("<ifStatement>\n");
 	++indentation;
 	writeXML(demand("if"));
@@ -303,7 +318,7 @@ void compileIfStatement() {
 	writeXML(demand("{"));
 	compileStatements();
 	writeXML(demand("}"));
-	if (term(token[next], "else")) {
+	if (term(tokens[next], "else")) {
 		writeXML(demand("else"));
 		writeXML(demand("{"));
 		compileStatements();
@@ -311,6 +326,7 @@ void compileIfStatement() {
 	}
 	--indentation;
 	writeIndented("</ifStatement>\n");
+	report("ENDIF");
 }
 
 /* </STATEMENT COMPILERS> */
@@ -318,13 +334,13 @@ void compileIfStatement() {
 void main(string[] args) {
 	jackTokenizer jt;
 	jt.init();
-	jt.lex("let x[y + 2*z] = Clss.func(5, 6);");
+	jt.lex("while (a = b) { if (x + Y < 2) { let x[y + 2*z] = Clss.func(5, 6); } }");
 	tokens = jt.getTokens();
 	foreach (i, token; tokens)
 		writeln(i, " ", token);
 	//init();
 	next = 0;
-	compileLetStatement();
+	compileStatements();
 	foreach(str; outputLines)
 		write(str);
 }
