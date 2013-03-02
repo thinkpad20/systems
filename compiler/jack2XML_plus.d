@@ -9,7 +9,7 @@ string className;
 
 bool printPush = false;
 bool printPop = false;
-bool printAdd = true;
+bool printAdd = false;
 bool printStack = false;
 bool printVM = true;
 
@@ -484,21 +484,22 @@ void compileSubroutineDec(bool namesOnly = false) {
 		while (next + 1 < tokens.length && !isSubroutineDec(tokens[next]))
 			++next;
 	} else {
-		writeln("Compiling subroutine ", funcName);
-		compileSubroutineBody();
+		compileSubroutineBody(funcName);
 	}
 	--indentation;
 	writeIndented("</subroutineDec>\r\n");
 }
 
-void compileSubroutineBody() {
+void compileSubroutineBody(string funcName) {
 	writeIndented("<subroutineBody>\r\n");
 	++indentation;
 	writeXML(demand("{"));
 	int numVars = 0;
+	writeln("Compiling subroutine ", funcName);
 	while (isTerminal(tokens[next], "var")) {
 		compileVarDec(numVars);
 	}
+	writeVM(format("function %s.%s %s", className, funcName, numVars));
 	compileStatements();
 	writeXML(demand("}"));
 	if (printStack) {
