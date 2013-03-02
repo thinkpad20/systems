@@ -1,8 +1,14 @@
-import std.stdio, std.string, std.algorithm, jackTokenizer;
+import std.stdio, std.string, std.algorithm, jackTokenizer, symbolTable;
 
 int next, indentation;
 Token[] tokens;
 string[] outputLines;
+SymbolTableStack sts;
+string className;
+
+bool printPush = true;
+bool printPop = true;
+bool printAdd = true;
 
 void report(string location = "") {
 	if (next < tokens.length)
@@ -39,8 +45,9 @@ void writeIndented(string str) {
 	//write(indent(str));
 }
 
-void writeXML(Token t) {
+Token writeXML(Token t) {
 	writeIndented(t.getXML());
+	return t;
 }
 /* </FORMATTING FUNCTIONS */
 
@@ -173,9 +180,14 @@ void compileExpressionList() {
 }
 
 void compileParameters() {
+	// push the symbol table for this function; thi will be popped
+	// at the END of the corresponding compileSubroutineBody
+	sts.push(printPush);
+	int numParams = 0;
 	while (next < tokens.length && isType(tokens[next])) {
-		writeXML(tokens[next++]);
-		writeXML(demand("identifier"));
+		string paramType = writeXML(tokens[next++]).symbol; // parameter type (int, char, etc)
+		string paramName = writeXML(demand("identifier")).symbol; // parameter name
+		sts.addSymbol(paramName, format("argument %d", numParams++), paramType);
 		if (next < tokens.length && isTerminal(tokens[next], ","))
 			writeXML(tokens[next++]);
 		else
@@ -292,45 +304,83 @@ void compileIfStatement() {
 
 /* <HIGHEST-LEVEL STRUCTURES> */
 void compileClass() {
+	// new symbol table on the stack
+	sts.push(printPush);
 	writeIndented("<class>\r\n");
 	++indentation;
 	writeXML(demand("class"));
-	writeXML(demand("identifier"));
+	className = writeXML(demand("identifier")).symbol; //set the class name
 	writeXML(demand("{"));
+	int fieldNum = 0, staticNum = 0;
 	while (isClassVarDec(tokens[next]))
-		compileClassVarDec();
+		compileClassVarDec(fieldNum, staticNum);
+
+	// do a first pass over the subroutine names, don't recurse, just get the names.
+	int save = next;
+	while (isSubroutineDec(tokens[next]))
+		compileSubroutineDec(true);
+	// do a second pass; this time recurse but don't get the names
+	next = save;
 	while (isSubroutineDec(tokens[next]))
 		compileSubroutineDec();
+	writeln("Table seen from class:");
+	writeln(sts);
+	// pop the symbol table off the stack
+	sts.pop(printPop);
 	writeXML(demand("}"));
 	--indentation;
 	writeIndented("</class>\r\n");
 }
 
-void compileClassVarDec() {
+void compileClassVarDec(ref int fieldNum, ref int staticNum) {
 	writeIndented("<classVarDec>\r\n");
 	++indentation;
-	writeXML(demandOneOf(["field", "static"]));
-	writeXML(demandOneOf(["int", "char", "boolean", "identifier"])); /* type */
-	writeXML(demand("identifier"));
+	string classVarType = writeXML(demandOneOf(["field", "static"])).type;
+	string type = writeXML(demandOneOf(["int", "char", "boolean", "identifier"])).symbol; // type
+	string varName = writeXML(demand("identifier")).symbol;
+	//create the entry in the symbol table
+	if (classVarType == "field") {
+		sts.addSymbol(varName, format("this %d", fieldNum++), type, printAdd);
+	} else {
+		sts.addSymbol(varName, format("%s.%d", className, staticNum++), type, printAdd);
+	}
 	while (isTerminal(tokens[next], ",")) {
 		writeXML(demand(","));
-		writeXML(demand("identifier"));
+		varName = writeXML(demand("identifier")).symbol;
+		if (classVarType == "field") {
+			sts.addSymbol(varName, format("this %d", fieldNum++), type, printAdd);
+		} else {
+			sts.addSymbol(varName, format("%s.%d", className, staticNum++), type, printAdd);
+		}
 	}
 	writeXML(demand(";"));
 	--indentation;
 	writeIndented("</classVarDec>\r\n");
 }
 
-void compileSubroutineDec() {
+void compileSubroutineDec(bool namesOnly = false) {
 	writeIndented("<subroutineDec>\r\n");
 	++indentation;
-	writeXML(demandOneOf(["constructor", "function", "method"]));
-	writeXML(demandOneOf(["void", "int", "char", "boolean", "identifier"])); /* 'void' or type */
-	writeXML(demand("identifier")); /* subroutineName */
+	string funcType = writeXML(demandOneOf(["constructor", "function", "method"])).type;
+	writeXML(demandOneOf(["void", "int", "char", "boolean", "identifier"])); // 'void' or type
+	string funcName = writeXML(demand("identifier")).symbol; // subroutineName
+	// If this is a "method", we need to count the implied parameter, so start at 1
+	int numParams = (funcType == "method")? 1 : 0;
 	writeXML(demand("("));
-	compileParameterList();
+	if (namesOnly) { // then we just want the name and the number of parameters
+		Token t;
+		while (t = tokens[next++], t.type != ")")
+			if (t.type == "identifier")
+				++numParams;
+		--next;
+	} else {
+		compileParameterList();
+	}
 	writeXML(demand(")"));
-	compileSubroutineBody();
+	if (namesOnly)
+		sts.addSymbol(funcName, format("%s.%s %d", className, funcName, numParams), funcType, printAdd);
+	else
+		compileSubroutineBody();
 	--indentation;
 	writeIndented("</subroutineDec>\r\n");
 }
@@ -339,24 +389,30 @@ void compileSubroutineBody() {
 	writeIndented("<subroutineBody>\r\n");
 	++indentation;
 	writeXML(demand("{"));
+	int numVars = 0;
 	while (isTerminal(tokens[next], "var")) {
-		compileVarDec();
+		compileVarDec(numVars);
 	}
 	compileStatements();
 	writeXML(demand("}"));
+	writeln("Table seen from subroutineBody:");
+	writeln(sts);
+	sts.pop(printPop);
 	--indentation;
 	writeIndented("</subroutineBody>\r\n");
 }
 
-void compileVarDec() {
+void compileVarDec(ref int numVars) {
 	writeIndented("<varDec>\r\n");
 	++indentation;
 	writeXML(demand("var"));
-	writeXML(demandOneOf(["int", "char", "boolean", "identifier"])); /* type */
-	writeXML(demand("identifier")); /* varName */
+	string varType = writeXML(demandOneOf(["int", "char", "boolean", "identifier"])).symbol; // type
+	string varName = writeXML(demand("identifier")).symbol; // varName
+	sts.addSymbol(varName, format("local %d", numVars++), varType, printAdd);
 	while (isTerminal(tokens[next], ",")) {
 		writeXML(demand(","));
-		writeXML(demand("identifier"));
+		varName = writeXML(demand("identifier")).symbol;
+		sts.addSymbol(varName, format("local %d", numVars++), varType, printAdd);
 	}
 	writeXML(demand(";"));
 	--indentation;

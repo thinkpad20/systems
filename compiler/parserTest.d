@@ -1,7 +1,5 @@
 import std.stdio, std.algorithm, std.string;
 
-int indent;
-
 struct GrammarRule {
 	string source;
 	string[] goesTo;
@@ -66,16 +64,6 @@ bool isPrefixMatch(string[] tokens, string[][] replacements) {
 	return false;
 }
 
-string indented(string str) {
-	string res = "";
-	for (int i=0; i<indent; ++i)
-		res ~= "  ";
-	return res ~ str;
-}
-
-string compileLet(string[] tokens) {
-	return
-}
 
 void init() {
 	grammar.insertRule("class", ["class", "className", "{", "classVarDec", "subroutineDec", "}"]);

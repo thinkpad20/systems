@@ -52,6 +52,11 @@ bool isKeywordConstant(Token t) {
 	return t.type == "true" || t.type == "false" || t.type == "null" || t.type == "this";
 }
 
+bool isTerm(Token t) {
+	return t.type == "integerConstant" || t.type == "stringConstant" || isKeywordConstant(t)
+					|| t.type == "identifier" || t.type == "(" || isUnaryOp(t);
+}
+
 bool isUnaryOp(Token t) {
 	return t.type == "~" || t.type == "-";
 }
@@ -64,6 +69,14 @@ bool isOp(Token t) {
 bool isStatement(Token t) {
 	string[] statements = ["let", "if", "while", "do", "return"];
 	return canFind(statements, t.type);
+}
+
+bool isClassVarDec(Token t) {
+	return term(t, "field") || term(t, "static");
+}
+
+bool isSubroutineDec(Token t) {
+	return term(t, "constructor") || term(t, "function") || term(t, "method");
 }
 
 /* </CHECKING FUNCTIONS> */
@@ -82,24 +95,10 @@ Token demandOneOf(string[] types) {
 	return ret;	
 }
 
-void compileExpressionList() {
-	writeIndented("<expressionList>\n");
-	++indentation;
-	while (true) {
-		compileExpression();
-		if (term(tokens[next], ","))
-			writeXML(tokens[next++]);
-		else
-			break;
-	}
-	--indentation;
-	writeIndented("</expressionList>\n");
-}
-
 void compileSubroutineCall() {
 	report("SRC0");
-	writeIndented("<subroutineCall>\n");
-	++indentation;
+	//writeIndented("<subroutineCall>\n");
+	//++indentation;
 	/* We have two possibilities here; either a regular function or a class method. */
 	if (term(tokens[next+1], ".")) {
 		report("SRC1");
@@ -113,8 +112,8 @@ void compileSubroutineCall() {
 	writeXML(demand("("));
 	compileExpressionList();
 	writeXML(demand(")"));
-	--indentation;
-	writeIndented("</subroutineCall>\n");
+	//--indentation;
+	//writeIndented("</subroutineCall>\n");
 }
 
 void compileTerm() {
@@ -193,6 +192,20 @@ void compileExpression() {
 	writeIndented("</expression>\n");
 }
 
+void compileExpressionList() {
+	writeIndented("<expressionList>\n");
+	++indentation;
+	while (isTerm(tokens[next])) {
+		compileExpression();
+		if (term(tokens[next], ","))
+			writeXML(tokens[next++]);
+		else
+			break;
+	}
+	--indentation;
+	writeIndented("</expressionList>\n");
+}
+
 /* <EXPRESSION COMPILERS> */
 void compileParameters() {
 	while (next < tokens.length && isType(tokens[next])) {
@@ -248,6 +261,8 @@ void compileReturnStatement() {
 	writeIndented("<returnStatement>\n");
 	++indentation;
 	writeXML(demand("return"));
+	if (!term(tokens[next], ";"))
+		compileExpression();
 	writeXML(demand(";"));
 	--indentation;
 	writeIndented("</returnStatement>\n");
@@ -331,16 +346,100 @@ void compileIfStatement() {
 
 /* </STATEMENT COMPILERS> */
 
+/* <HIGHEST-LEVEL STRUCTURES> */
+
+void compileClass() {
+	writeIndented("<class>\n");
+	++indentation;
+	writeXML(demand("class"));
+	writeXML(demand("identifier"));
+	writeXML(demand("{"));
+	if (isClassVarDec(tokens[next]))
+		compileClassVarDec();
+	if (isSubroutineDec(tokens[next]))
+		compileSubroutineDec();
+	writeXML(demand("}"));
+	--indentation;
+	writeIndented("</class>\n");
+}
+
+void compileClassVarDec() {
+	writeIndented("<classVarDec>\n");
+	++indentation;
+	while (isClassVarDec(tokens[next])) {
+		writeXML(demandOneOf(["field", "static"]));
+		writeXML(demandOneOf(["int", "char", "boolean", "identifier"])); /* type */
+		writeXML(demand("identifier"));
+		while (term(tokens[next], ",")) {
+			writeXML(demand(","));
+			writeXML(demand("identifier"));
+		}
+		writeXML(demand(";"));
+	}
+	--indentation;
+	writeIndented("</classVarDec>\n");
+}
+
+void compileSubroutineDec() {
+	writeIndented("<subroutineDec>\n");
+	++indentation;
+	while (next < tokens.length && isSubroutineDec(tokens[next])) {
+		writeXML(demandOneOf(["constructor", "function", "method"]));
+		writeXML(demandOneOf(["void", "int", "char", "boolean", "identifier"])); /* 'void' or type */
+		writeXML(demand("identifier")); /* subroutineName */
+		writeXML(demand("("));
+		compileParameterList();
+		writeXML(demand(")"));
+		compileSubroutineBody();
+	}
+	--indentation;
+	writeIndented("</subroutineDec>\n");
+}
+
+void compileSubroutineBody() {
+	writeIndented("<subroutineBody>\n");
+	++indentation;
+	writeXML(demand("{"));
+	while (term(tokens[next], "var")) {
+		compileVarDec();
+	}
+	compileStatements();
+	writeXML(demand("}"));
+	--indentation;
+	writeIndented("</subroutineBody>\n");
+}
+
+void compileVarDec() {
+	writeIndented("<varDec>\n");
+	++indentation;
+	writeXML(demand("var"));
+	writeXML(demandOneOf(["int", "char", "boolean", "identifier"])); /* type */
+	writeXML(demand("identifier")); /* varName */
+	while (term(tokens[next], ",")) {
+		writeXML(demand(","));
+		writeXML(demand("identifier"));
+	}
+	writeXML(demand(";"));
+	--indentation;
+	writeIndented("</varDec>\n");
+}
+
+/* </HIGHEST-LEVEL STRUCTURES> */
+
+
 void main(string[] args) {
 	jackTokenizer jt;
 	jt.init();
-	jt.lex("while (a = b) { if (x + Y < 2) { let x[y + 2*z] = Clss.func(5, 6); } }");
+	jt.prepareLexWrite(args[1], args[2]);
 	tokens = jt.getTokens();
 	foreach (i, token; tokens)
 		writeln(i, " ", token);
 	//init();
 	next = 0;
-	compileStatements();
-	foreach(str; outputLines)
+	compileClass();
+	auto outputFile = File(args[3], "w");
+	foreach(str; outputLines) {
+		outputFile.write(str);
 		write(str);
+	}
 }

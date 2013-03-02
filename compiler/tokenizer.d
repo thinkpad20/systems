@@ -1,58 +1,58 @@
 module jackTokenizer;
 import std.stdio, std.string, std.conv, std.algorithm;
 
-enum TokenCat {
-	KW, SYM, INTCONST, STRCONST, IDENT, WS, 
-	NONE, PARTIALSTRING, COMMENT, PARTIALCOMMENT
-}
+struct jackTokenizer {
+	static enum TokenCat {
+		KW, SYM, INTCONST, STRCONST, IDENT, WS, 
+		NONE, PARTIALSTRING, COMMENT, PARTIALCOMMENT
+	}
+	struct Token {
 
-struct Token {
-	string symbol;
-	TokenCat category;
-	string type;
-	int val;
-	string str;
-	static string[TokenCat] descriptions;
-	this(string sym, TokenCat cat) { // Token struct initializer
-		descriptions = [TokenCat.KW:"keyword", 
-				TokenCat.IDENT:"identifier", TokenCat.SYM:"symbol", 
-				TokenCat.INTCONST:"integerConstant", TokenCat.STRCONST:"stringConstant"];
-		symbol = sym;
-		category = cat;
-		if (cat == TokenCat.INTCONST) {
-			val = to!int(sym);
-			type = "integerConstant";
-		} else if (cat == TokenCat.STRCONST) {
-			str = sym[1..$-1];
-			type = "stringConstant";
-		} else if (cat == TokenCat.IDENT) {
-			type = "identifier";
-		} else {
-			type = symbol;
+		string symbol;
+		TokenCat category;
+		string type;
+		int val;
+		string str;
+		static string[TokenCat] descriptions;
+		this(string sym, TokenCat cat) { // Token struct initializer
+			descriptions = [TokenCat.KW:"keyword", 
+					TokenCat.IDENT:"identifier", TokenCat.SYM:"symbol", 
+					TokenCat.INTCONST:"integerConstant", TokenCat.STRCONST:"stringConstant"];
+			symbol = sym;
+			category = cat;
+			if (cat == TokenCat.INTCONST) {
+				val = to!int(sym);
+				type = "intConst";
+			} else if (cat == TokenCat.STRCONST) {
+				str = sym[1..$-1];
+				type = "strConst";
+			} else if (cat == TokenCat.IDENT) {
+				type = "identifier";
+			} else {
+				type = symbol;
+			}
+
 		}
 
+		string getXML() {
+			if (category == TokenCat.STRCONST)
+				return format("<%s> %s </%s>", descriptions[category], str, descriptions[category]);
+			if (category == TokenCat.INTCONST)
+				return format("<%s> %s </%s>", descriptions[category], val, descriptions[category]);
+			if (symbol == "<")
+				return format("<%s> &lt; </%s>", descriptions[category], descriptions[category]);
+			if (symbol == ">")
+				return format("<%s> &gt; </%s>", descriptions[category], descriptions[category]);
+			if (symbol == "&")
+				return format("<%s> &amp; </%s>", descriptions[category], descriptions[category]);
+			return format("<%s> %s </%s>", descriptions[category], symbol, descriptions[category]);
+		}
+
+		string toString() {
+			return symbol ~ " (" ~ descriptions[category] ~ ")";
+		}
 	}
 
-	string getXML() {
-		if (category == TokenCat.STRCONST)
-			return format("<%s> %s </%s>\r\n", descriptions[category], str, descriptions[category]);
-		if (category == TokenCat.INTCONST)
-			return format("<%s> %s </%s>\r\n", descriptions[category], val, descriptions[category]);
-		if (symbol == "<")
-			return format("<%s> &lt; </%s>\r\n", descriptions[category], descriptions[category]);
-		if (symbol == ">")
-			return format("<%s> &gt; </%s>\r\n", descriptions[category], descriptions[category]);
-		if (symbol == "&")
-			return format("<%s> &amp; </%s>\r\n", descriptions[category], descriptions[category]);
-		return format("<%s> %s </%s>\r\n", descriptions[category], symbol, descriptions[category]);
-	}
-
-	string toString() {
-		return symbol ~ " (" ~ type ~ ")";
-	}
-}
-
-struct jackTokenizer {
 	int[string] keywords, symbols;
 	int[char] identFirstChar, identOtherChars, numbers;
 	int lineNumber, indentAmount;
@@ -68,8 +68,9 @@ struct jackTokenizer {
 	}
 
 	bool matchNum(string str) {
-		if (!str) return false;
-		for (int i=0; i<str.length; ++i)
+		if (!str || str == "-") return false;
+		if (!((str[0] in numbers) || str[0] == '-')) return false;
+		for (int i=1; i<str.length; ++i)
 			if (!(str[i] in numbers)) { return false; }
 		return true;
 	}
@@ -110,27 +111,27 @@ struct jackTokenizer {
 	}
 
 	void lex(string line) {
-		write("jackTokenizer lexing...");
-		tokens = [];
 		int cursor; // keeps track of our position in the line
-		writeln("Input:\r\n", line);
+		writeln("Input:\n", line);
 		string current = "", prev = "";
 		TokenCat bestCat = TokenCat.NONE;
 		for (cursor = 0; cursor < line.length; ++cursor) {
 			char c = line[cursor];
 			current ~= c; // append next character onto our working token
 			if (bestMatch(current) == TokenCat.NONE) { // then we've encountered an illegal expression
-				if (prev == "") // this would mean we started off with something illegal
-					throw new Exception(format("Error: illegal input on line %s", lineNumber));
-				if (bestCat != TokenCat.WS && bestCat != TokenCat.COMMENT) // skip whitespaces & comments
+				if (bestCat == TokenCat.NONE) { //bestCat stored the type of the previous expression
+					throw new Exception(format("Error: illegal input on line %s", lineNumber)); // if none, this means
+					// the previous statement was illegal, so there was some illegal input.
+				}
+				if (bestCat != TokenCat.WS && bestCat != TokenCat.COMMENT) // if it's not comment or ws, we record it
 					tokens ~= Token(prev, bestCat);
-				current = to!string(c); // start new partial token with just c
+				current = to!string(c);
 				prev = "";
 			}
 			bestCat = bestMatch(current);
 			prev = current;
 		}
-		// we'll have one character left over, so process it:
+		//we now have to do it on the very last character.
 		bestCat = bestMatch(current);
 		if (bestCat != TokenCat.WS && bestCat != TokenCat.NONE)
 			if (bestCat == TokenCat.PARTIALSTRING)
@@ -139,7 +140,6 @@ struct jackTokenizer {
 				throw new Exception("Error: unbounded comment.");
 			else
 				tokens ~= Token(prev, bestCat);
-		writeln("done");
 	}
 
 	void init() {
@@ -166,31 +166,28 @@ struct jackTokenizer {
 	}
 
 	void prepare(string filename) {
-		write("jackTokenizer preparing ", filename, "... ");
+		string[] lines;
 		string noComments;
 		auto file = File(filename, "r");
-		foreach (line; file.byLine) {
-			string strippedLine = to!string(line).split("//")[0];
-			if (strippedLine != "")
-				noComments ~= strippedLine ~ "\r\n";
+		foreach (line; file.byLine)
+			lines ~= to!string(line);
+		foreach (line; lines) {
+			string strippedLine = line.split("//")[0];
+			noComments ~= strippedLine ~ "\n";
 		}
 		preparedCode = noComments;
-		file.close();
-		writeln("done");
 	}
 
 	void writeTokens(string filename) {
-		write("jackTokenizer writing tokens to ", filename, "... ");
 		auto file = File(filename, "w");
-		file.write("<tokens>\r\n");
+		file.writeln("<tokens>");
 		foreach (token; tokens)
-			file.write(token.getXML());
-		file.writeln("</tokens>\r\n");
+			file.writeln(token.getXML());
+		file.writeln("</tokens>");
 		file.close();
-		writeln("done");
 	}
 
-	void prepareLexWrite(string inputFilename, string outputFilename) {
+	void lexAndWrite(string inputFilename, string outputFilename) {
 		prepare(inputFilename);
 		lex();
 		writeTokens(outputFilename);

@@ -4,30 +4,36 @@ enum TokenCat {
 	KW, SYM, INTCONST, STRCONST, IDENT, WS, NONE, PARTIALSTRING, COMMENT, PARTIALCOMMENT
 }
 
-enum TokenType { _class_, constructor_, _function_, _method_,
-			 _field_, _static_, _var_, _int_, _char_, _boolean_,
-			 _void_, _true_, _false_, _null_, _this_, _let_,
-			 _do_, _if_, _else_, _while_, _return_
-}
+//enum TokenType { _class_, constructor_, _function_, _method_,
+//			 _field_, _static_, _var_, _int_, _char_, _boolean_,
+//			 _void_, _true_, _false_, _null_, _this_, _let_,
+//			 _do_, _if_, _else_, _while_, _return_
+//}
 
 struct Token {
 	string symbol;
 	TokenCat category;
-	TokenType type;
+	string type;
 	int val;
 	string str;
-	string[TokenCat] descriptions;
+	static string[TokenCat] descriptions;
 	//constructor for keyword or identifier tokens
 	this(string sym, TokenCat cat) {
-		descriptions = [TokenCat.KW:"keyword", TokenCat.IDENT:"identifier",
-						 TokenCat.SYM:"symbol", TokenCat.INTCONST:"integerConstant",
-						 TokenCat.STRCONST:"stringConstant"];
-		this.symbol = sym;
-		this.category = cat;
-		if (cat == TokenCat.INTCONST)
-			this.val = to!int(sym);
-		if (cat == TokenCat.STRCONST)
-			this.str = sym[1..$-1];
+		descriptions = [TokenCat.KW:"keyword", TokenCat.IDENT:"identifier", TokenCat.SYM:"symbol", 
+						 TokenCat.INTCONST:"integerConstant", TokenCat.STRCONST:"stringConstant"];
+		symbol = sym;
+		category = cat;
+		if (cat == TokenCat.INTCONST) {
+			val = to!int(sym);
+			type = "intConst";
+		} else if (cat == TokenCat.STRCONST) {
+			str = sym[1..$-1];
+			type = "strConst";
+		} else if (cat == TokenCat.IDENT) {
+			type = "identifier";
+		} else {
+			type = symbol;
+		}
 
 	}
 
