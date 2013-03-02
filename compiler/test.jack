@@ -1,6 +1,6 @@
 class Foo {
 	//this is a comment
-	field int x, y z; // this is another comment
+	field int x, y, z; // this is another comment
 	field string str;
 	static int fuzz, theta;
 	static Broda bb;
