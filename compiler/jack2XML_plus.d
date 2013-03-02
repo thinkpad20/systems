@@ -443,7 +443,7 @@ void compileClassVarDec(ref int fieldNum, ref int staticNum) {
 	if (classVarType == "field") {
 		sts.addSymbol(varName, format("this %d", fieldNum++), type, printAdd);
 	} else {
-		sts.addSymbol(varName, format("%s.%d", className, staticNum++), type, printAdd);
+		sts.addSymbol(varName, format("static %s", staticNum++), type, printAdd);
 	}
 	while (isTerminal(tokens[next], ",")) {
 		writeXML(demand(","));
@@ -451,7 +451,7 @@ void compileClassVarDec(ref int fieldNum, ref int staticNum) {
 		if (classVarType == "field") {
 			sts.addSymbol(varName, format("this %d", fieldNum++), type, printAdd);
 		} else {
-			sts.addSymbol(varName, format("%s.%d", className, staticNum++), type, printAdd);
+			sts.addSymbol(varName, format("static %s", staticNum++), type, printAdd);
 		}
 	}
 	writeXML(demand(";"));
