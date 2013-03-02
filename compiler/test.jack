@@ -1,18 +1,24 @@
 class Foo {
 	//this is a comment
-	field int x, z;
-	field int y; // this is another comment
+	field int x, y z; // this is another comment
 	field string str;
 	static int fuzz, theta;
 	static Broda bb;
 	/* this is another comment */
-	// constructor Foo new(int _x, int _y) {
-	// 	let x = _x;
-	// 	let y = _y;
-	// 	let str = "this is a test, mothafuzksdf $$";
-	// 	return this;
-	// }
-	method int baz (int poop, int loopdeloop) {
+	constructor Foo new(int _x, int _y, int _z) {
+		//"method" calls
+		do bar(5, 19); // push pointer 0 // push 5 // push 19 // call Foo.bar 3
+		do bb.baz(100); // push static 2 // push 100 // call Broda.baz 2
+		do quux(x); // push this 0 // call Foo.quux 1
+		do Math.divide(y, z); // push this 1 // push this 2 // call Math.divide 2
+		return;
+	}
+
+	method int bar (int jonathan, int cathy) {
+		return baz(jonathan, cathy, true);
+	}
+
+	method int baz (int poop, int loopdeloop, boolean hulahoop) {
 		var int i, j;
 		let poop = -345;
 		let i = 1;
@@ -23,5 +29,10 @@ class Foo {
 		else {
 			return j;
 		}
+	}
+
+	function void quux (int j) {
+		var int i;
+		let i = j;
 	}
 }
