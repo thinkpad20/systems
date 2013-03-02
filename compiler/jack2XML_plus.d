@@ -1,14 +1,25 @@
-import std.stdio, std.string, std.algorithm, jackTokenizer, symbolTable;
+import std.stdio, std.string, std.conv, std.algorithm, jackTokenizer, symbolTable;
 
 int next, indentation;
 Token[] tokens;
 string[] outputLines;
+string[] outputVM;
 SymbolTableStack sts;
 string className;
 
-bool printPush = true;
-bool printPop = true;
-bool printAdd = true;
+bool printPush = false;
+bool printPop = false;
+bool printAdd = false;
+bool printStack = false;
+
+string[string] opToVm, kwConstToVM;
+
+void init() {
+	opToVm = ["+":"add", "-":"sub", "*":"call Math.multiply 2", 
+			  "/":"call Math.divide 2", "&":"and", "|":"or", 
+			  "<":"lt", ">":"gt", "=":"eq"];
+	kwConstToVM = ["true":"constant 1\r\nneg", "false":"constant 0", "null":"constant 0", "this":"pointer 0"];
+}
 
 void report(string location = "") {
 	if (next < tokens.length)
@@ -31,6 +42,15 @@ Token demandOneOf(string[] types) {
 	return ret;	
 }
 
+void buildStringConstant(string str) {
+	outputVM ~= "push constant " ~ to!string(str.length);
+	outputVM ~= "call String.new 1";
+	foreach (c; str) {
+		string ord = to!string(to!int(c));
+		outputVM ~= format("push constant " ~ ord);
+		outputVM ~= "call String.appendChar 2";
+	}
+}
 
 /* <FORMATTING FUNCTIONS> */
 string indent(string str) {
@@ -113,16 +133,19 @@ void compileTerm() {
 	writeIndented("<term>\r\n");
 	++indentation;
 	if (tokens[next].type == "integerConstant") {
-		writeXML(tokens[next++]);
+		string num = writeXML(tokens[next++]).symbol;
+		outputVM ~= "push constant " ~ num;
 	}
 	else if (tokens[next].type == "stringConstant") {
-		writeXML(tokens[next++]);
+		string str = writeXML(tokens[next++]).str;
+		buildStringConstant(str);
 	}
 	else if (isKeywordConstant(tokens[next])) {
-		writeXML(tokens[next++]);
+		string kwConst = writeXML(tokens[next++]).symbol;
+		outputVM ~= "push " ~ kwConstToVM[kwConst];
 	}
 	else if (isUnaryOp(tokens[next])) {
-		writeXML(tokens[next++]);
+		string unOp = writeXML(tokens[next++]).symbol;
 		compileTerm();
 	}
 	else if (isTerminal(tokens[next], "(")) {
@@ -142,7 +165,12 @@ void compileTerm() {
 			compileSubroutineCall();
 		}
 		else { /* if it's neither one of those, it must be a variable */
-			writeXML(tokens[next++]);
+			string vm;
+			SymbolTableEntry entry = sts.lookup(writeXML(tokens[next++]).symbol);
+			if (entry) {
+				vm = entry.vm;
+				outputVM ~= "push " ~ vm;
+			}
 		}
 	}
 	else if (isTerminal(tokens[next], "identifier") && isTerminal(tokens[next], "("))
@@ -156,10 +184,12 @@ void compileTerm() {
 void compileExpression() {
 	writeIndented("<expression>\r\n");
 	++indentation;
+	string op;
 	compileTerm();
 	while (isOp(tokens[next])) {
-		writeXML(tokens[next++]);
+		op = writeXML(tokens[next++]).symbol;
 		compileTerm();
+		outputVM ~= opToVm[op];
 	}
 	--indentation;
 	writeIndented("</expression>\r\n");
@@ -267,8 +297,15 @@ void compileLetStatement() {
 	writeIndented("<letStatement>\r\n");
 	++indentation;
 	writeXML(demand("let"));
-	writeXML(demand("identifier"));
-	/* the identifier might have array brackets following. */
+	// write the XML for the variable and look it up in the symbol table
+	SymbolTableEntry dest = sts.lookup(writeXML(demand("identifier")).symbol);
+	// error check
+	string destVM;
+	if (dest)
+		destVM = dest.vm;
+	else
+		throw new Exception ("Error: symbols not found");
+	// the identifier might have array brackets following.
 	if (isTerminal(tokens[next], "[")) {
 		writeXML(demand("["));
 		compileExpression();
@@ -277,6 +314,7 @@ void compileLetStatement() {
 	writeXML(demand("="));
 	compileExpression();
 	writeXML(demand(";"));
+	outputVM ~= "pop " ~ destVM;
 	--indentation;
 	writeIndented("</letStatement>\r\n");
 }
@@ -323,8 +361,10 @@ void compileClass() {
 	next = save;
 	while (isSubroutineDec(tokens[next]))
 		compileSubroutineDec();
-	writeln("Table seen from class:");
-	writeln(sts);
+	if (printStack) {
+		writeln("Table seen from class:");
+		writeln(sts);
+	}
 	// pop the symbol table off the stack
 	sts.pop(printPop);
 	writeXML(demand("}"));
@@ -395,8 +435,10 @@ void compileSubroutineBody() {
 	}
 	compileStatements();
 	writeXML(demand("}"));
-	writeln("Table seen from subroutineBody:");
-	writeln(sts);
+	if (printStack) {
+		writeln("Table seen from subroutineBody:");
+		writeln(sts);
+	}
 	sts.pop(printPop);
 	--indentation;
 	writeIndented("</subroutineBody>\r\n");
@@ -421,6 +463,7 @@ void compileVarDec(ref int numVars) {
 /* </HIGHEST-LEVEL STRUCTURES> */
 
 void main(string[] args) {
+	init();
 	jackTokenizer jt;
 	jt.init();
 	for (int i=1; i<args.length; ++i) {
@@ -435,4 +478,6 @@ void main(string[] args) {
 			outputFile.write(str);
 		outputFile.close();
 	}
+	foreach(line; outputVM)
+		writeln(line);
 }
