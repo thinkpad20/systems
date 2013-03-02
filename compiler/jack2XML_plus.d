@@ -9,8 +9,9 @@ string className;
 
 bool printPush = false;
 bool printPop = false;
-bool printAdd = false;
+bool printAdd = true;
 bool printStack = false;
+bool printVM = true;
 
 string[string] opToVm, kwConstToVM, unOpToVM;
 
@@ -44,12 +45,12 @@ Token demandOneOf(string[] types) {
 }
 
 void buildStringConstant(string str) {
-	outputVM ~= "push constant " ~ to!string(str.length);
-	outputVM ~= "call String.new 1";
+	writeVM("push constant " ~ to!string(str.length));
+	writeVM("call String.new 1");
 	foreach (c; str) {
 		string ord = to!string(to!int(c));
-		outputVM ~= format("push constant " ~ ord);
-		outputVM ~= "call String.appendChar 2";
+		writeVM(format("push constant " ~ ord));
+		writeVM("call String.appendChar 2");
 	}
 }
 
@@ -70,6 +71,21 @@ Token writeXML(Token t) {
 	writeIndented(t.getXML());
 	return t;
 }
+
+void writeVM(string s, string calledFrom = "") {
+	outputVM ~= s;
+	if (printVM) {
+		writeln("Wrote vm: ", s);
+		if (calledFrom.length > 0) writeln("called from: ", calledFrom);
+	}
+
+}
+
+void writeVM(string[] ss) {
+	foreach (s; ss)
+		writeVM(s);
+}
+
 /* </FORMATTING FUNCTIONS */
 
 /* <CHECKING FUNCTIONS> */
@@ -117,17 +133,44 @@ bool isSubroutineDec(Token t) {
 /* <EXPRESSION COMPILERS> */
 
 void compileSubroutineCall() {
-	/* We have two possibilities here; either a regular function or a class method. */
+	// We have two possibilities here; either a regular function or a class method.
+	string methodName;
+	string vm, fullFuncName, objectName = tokens[next].symbol;
+	bool isStatic = false;
+	int numExprs;
 	if (isTerminal(tokens[next+1], ".")) {
+		isStatic = true;
 		writeXML(demand("identifier"));
 		writeXML(demand("."));
 	}
-	/* Both possibilities will need these 4 elements. 
-	A class method needs the above two as well. */
-	writeXML(demand("identifier"));
+	// Both possibilities will need these 4 elements. 
+	// A class method needs the above two as well.
+	methodName = writeXML(demand("identifier")).symbol;
+	SymbolTableEntry e;
+	if (isStatic) { // then we have a call of the form "do Class.method(args);"
+		e = sts.lookup(objectName);
+		if (e) { // then we assume we're operating on an instance
+			objectName = e.type; // the class of the object is its type
+			writeVM(format("push %s", e.vm)); // the base of the object is pushed on the stack
+			++numExprs; // count the implicit parameter
+		}  // otherwise we are calling some non-static method, so we can use a regular call
+	} else { // then we have a call of the form "do method(args);"
+		e = sts.lookup(methodName);
+		if (e) {
+			objectName = className; // use current class
+			if (e.isMethod) {// we have an instance
+				writeVM("push pointer 0");
+				++numExprs;
+			}
+		}
+	}
+	fullFuncName = format("%s.%s", objectName, methodName);
+
 	writeXML(demand("("));
-	compileExpressionList();
+	numExprs += compileExpressionList();
 	writeXML(demand(")"));
+
+	writeVM(format("call %s %s", fullFuncName, numExprs));
 }
 
 void compileTerm() {
@@ -135,7 +178,7 @@ void compileTerm() {
 	++indentation;
 	if (tokens[next].type == "integerConstant") {
 		string num = writeXML(tokens[next++]).symbol; // get the numeric value of the constant
-		outputVM ~= "push constant " ~ num;
+		writeVM("push constant " ~ num);
 	}
 	else if (tokens[next].type == "stringConstant") {
 		string str = writeXML(tokens[next++]).str; // get the internal string
@@ -143,14 +186,15 @@ void compileTerm() {
 	}
 	else if (isKeywordConstant(tokens[next])) {
 		string kwConst = writeXML(tokens[next++]).symbol;
-		outputVM ~= "push " ~ kwConstToVM[kwConst];
+		writeVM("push " ~ kwConstToVM[kwConst]);
 	}
 	else if (isUnaryOp(tokens[next])) {
 		string unOp = writeXML(tokens[next++]).symbol;
 		compileTerm();
-		outputVM ~= unOpToVM[unOp];
+		writeVM(unOpToVM[unOp]);
 	}
 	else if (isTerminal(tokens[next], "(")) {
+		// nothing to write here, since we'll be starting over
 		writeXML(tokens[next++]);
 		compileExpression();
 		writeXML(demand(")"));
@@ -158,10 +202,18 @@ void compileTerm() {
 	else if (isTerminal(tokens[next], "identifier")) {
 		// Here we have three possibilities: array reference, a subroutine name, else a variable
 		if (isTerminal(tokens[next+1], "[")) { // check if there's a [
-			writeXML(tokens[next++]); // Write the variable
+			string arrName = writeXML(tokens[next++]).symbol; // Write the variable
+			SymbolTableEntry e = sts.lookup(arrName);
+			if (e)
+				writeVM("push " ~ e.vm);
+			else
+				throw new Exception(format("Error: symbol %s not recognized.", arrName));
 			writeXML(demand("[")); // grab the [ (the demand is unnecessary, but...)
 			compileExpression(); // write the internal expression
 			writeXML(demand("]")); // and demand a ]
+			//at this point, the result of the ex"pression will be on the top of the stack.
+			writeVM(["add", "pop pointer 1", "push that 0"]);
+
 		}
 		else if (isTerminal(tokens[next+1], "(") || isTerminal(tokens[next+1], ".")) { // check for a subroutine call
 			compileSubroutineCall();
@@ -171,7 +223,7 @@ void compileTerm() {
 			SymbolTableEntry entry = sts.lookup(writeXML(tokens[next++]).symbol);
 			if (entry) {
 				vm = entry.vm;
-				outputVM ~= "push " ~ vm;
+				writeVM("push " ~ vm);
 			}
 		}
 	}
@@ -191,16 +243,18 @@ void compileExpression() {
 	while (isOp(tokens[next])) {
 		op = writeXML(tokens[next++]).symbol;
 		compileTerm();
-		outputVM ~= opToVm[op];
+		writeVM(opToVm[op]);
 	}
 	--indentation;
 	writeIndented("</expression>\r\n");
 }
 
-void compileExpressionList() {
+int compileExpressionList() {
 	writeIndented("<expressionList>\r\n");
 	++indentation;
+	int numExprs = 0;
 	while (isTerm(tokens[next])) {
+		++numExprs;
 		compileExpression();
 		if (isTerminal(tokens[next], ","))
 			writeXML(tokens[next++]);
@@ -209,6 +263,7 @@ void compileExpressionList() {
 	}
 	--indentation;
 	writeIndented("</expressionList>\r\n");
+	return numExprs;
 }
 
 void compileParameters() {
@@ -309,14 +364,17 @@ void compileLetStatement() {
 		throw new Exception ("Error: symbols not found");
 	// the identifier might have array brackets following.
 	if (isTerminal(tokens[next], "[")) {
+		writeVM("push " ~ destVM);
 		writeXML(demand("["));
 		compileExpression();
 		writeXML(demand("]"));
+		writeVM(["add", "pop pointer 1"]);
+		destVM = "that 0";
 	}
 	writeXML(demand("="));
 	compileExpression();
 	writeXML(demand(";"));
-	outputVM ~= "pop " ~ destVM;
+	writeVM("pop " ~ destVM);
 	--indentation;
 	writeIndented("</letStatement>\r\n");
 }
@@ -357,8 +415,9 @@ void compileClass() {
 
 	// do a first pass over the subroutine names, don't recurse, just get the names.
 	int save = next;
-	while (isSubroutineDec(tokens[next]))
+	while (isSubroutineDec(tokens[next])) {
 		compileSubroutineDec(true);
+	}
 	// do a second pass; this time recurse but don't get the names
 	next = save;
 	while (isSubroutineDec(tokens[next]))
@@ -408,6 +467,7 @@ void compileSubroutineDec(bool namesOnly = false) {
 	string funcName = writeXML(demand("identifier")).symbol; // subroutineName
 	// If this is a "method", we need to count the implied parameter, so start at 1
 	int numParams = (funcType == "method")? 1 : 0;
+	bool isMethod = (funcType == "method");
 	writeXML(demand("("));
 	if (namesOnly) { // then we just want the name and the number of parameters
 		Token t;
@@ -419,10 +479,14 @@ void compileSubroutineDec(bool namesOnly = false) {
 		compileParameterList();
 	}
 	writeXML(demand(")"));
-	if (namesOnly)
-		sts.addSymbol(funcName, format("%s.%s %d", className, funcName, numParams), funcType, printAdd);
-	else
+	if (namesOnly) {
+		sts.addSymbol(funcName, format("%s.%s %d", className, funcName, numParams), funcType, numParams, isMethod, printAdd);
+		while (next + 1 < tokens.length && !isSubroutineDec(tokens[next]))
+			++next;
+	} else {
+		writeln("Compiling subroutine ", funcName);
 		compileSubroutineBody();
+	}
 	--indentation;
 	writeIndented("</subroutineDec>\r\n");
 }
@@ -475,10 +539,10 @@ void main(string[] args) {
 		outputLines = [];
 		next = 0;
 		compileClass();
-		auto outputFile = File(filenameRoot ~ ".xml", "w");
-		foreach(str; outputLines)
-			outputFile.write(str);
-		outputFile.close();
+		//auto outputFile = File(filenameRoot ~ ".xml", "w");
+		//foreach(str; outputLines)
+		//	outputFile.write(str);
+		//outputFile.close();
 	}
 	foreach(line; outputVM)
 		writeln(line);
