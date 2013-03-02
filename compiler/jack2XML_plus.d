@@ -12,13 +12,14 @@ bool printPop = false;
 bool printAdd = false;
 bool printStack = false;
 
-string[string] opToVm, kwConstToVM;
+string[string] opToVm, kwConstToVM, unOpToVM;
 
 void init() {
 	opToVm = ["+":"add", "-":"sub", "*":"call Math.multiply 2", 
 			  "/":"call Math.divide 2", "&":"and", "|":"or", 
 			  "<":"lt", ">":"gt", "=":"eq"];
 	kwConstToVM = ["true":"constant 1\r\nneg", "false":"constant 0", "null":"constant 0", "this":"pointer 0"];
+	unOpToVM = ["~":"not", "-":"neg"];
 }
 
 void report(string location = "") {
@@ -133,11 +134,11 @@ void compileTerm() {
 	writeIndented("<term>\r\n");
 	++indentation;
 	if (tokens[next].type == "integerConstant") {
-		string num = writeXML(tokens[next++]).symbol;
+		string num = writeXML(tokens[next++]).symbol; // get the numeric value of the constant
 		outputVM ~= "push constant " ~ num;
 	}
 	else if (tokens[next].type == "stringConstant") {
-		string str = writeXML(tokens[next++]).str;
+		string str = writeXML(tokens[next++]).str; // get the internal string
 		buildStringConstant(str);
 	}
 	else if (isKeywordConstant(tokens[next])) {
@@ -147,6 +148,7 @@ void compileTerm() {
 	else if (isUnaryOp(tokens[next])) {
 		string unOp = writeXML(tokens[next++]).symbol;
 		compileTerm();
+		outputVM ~= unOpToVM[unOp];
 	}
 	else if (isTerminal(tokens[next], "(")) {
 		writeXML(tokens[next++]);
@@ -154,17 +156,17 @@ void compileTerm() {
 		writeXML(demand(")"));
 	}
 	else if (isTerminal(tokens[next], "identifier")) {
-		/* Here we have three possibilities: array reference, a subroutine name, else a variable */
-		if (isTerminal(tokens[next+1], "[")) { /* check if there's a [ */
-			writeXML(tokens[next++]); /* Write the variable */
-			writeXML(demand("[")); /* grab the [ (the demand is unnecessary, but...) */
-			compileExpression(); /* write the internal expression */
-			writeXML(demand("]")); /* and demand a ] */
+		// Here we have three possibilities: array reference, a subroutine name, else a variable
+		if (isTerminal(tokens[next+1], "[")) { // check if there's a [
+			writeXML(tokens[next++]); // Write the variable
+			writeXML(demand("[")); // grab the [ (the demand is unnecessary, but...)
+			compileExpression(); // write the internal expression
+			writeXML(demand("]")); // and demand a ]
 		}
-		else if (isTerminal(tokens[next+1], "(") || isTerminal(tokens[next+1], ".")) { /* check for a subroutine call */
+		else if (isTerminal(tokens[next+1], "(") || isTerminal(tokens[next+1], ".")) { // check for a subroutine call
 			compileSubroutineCall();
 		}
-		else { /* if it's neither one of those, it must be a variable */
+		else { // if it's neither one of those, it must be a variable
 			string vm;
 			SymbolTableEntry entry = sts.lookup(writeXML(tokens[next++]).symbol);
 			if (entry) {
