@@ -1,6 +1,6 @@
 import std.stdio, std.string, std.conv, std.algorithm, jackTokenizer, symbolTable;
 
-int next, indentation;
+int next, indentation, ifStatementCount = 0, whileCount = 0, numClassVars = 0;
 Token[] tokens;
 string[] outputLines;
 string[] outputVM;
@@ -266,11 +266,11 @@ int compileExpressionList() {
 	return numExprs;
 }
 
-void compileParameters() {
-	// push the symbol table for this function; thi will be popped
+void compileParameters(bool isMethod) {
+	// push the symbol table for this function; this will be popped
 	// at the END of the corresponding compileSubroutineBody
 	sts.push(printPush);
-	int numParams = 0;
+	int numParams = (isMethod)? 1 : 0;
 	while (next < tokens.length && isType(tokens[next])) {
 		string paramType = writeXML(tokens[next++]).symbol; // parameter type (int, char, etc)
 		string paramName = writeXML(demand("identifier")).symbol; // parameter name
@@ -282,10 +282,10 @@ void compileParameters() {
 	}
 }
 
-void compileParameterList() {
+void compileParameterList(bool isMethod) {
 	writeIndented("<parameterList>\r\n");
 	++indentation;
-	compileParameters();
+	compileParameters(isMethod);
 	--indentation;
 	writeIndented("</parameterList>\r\n");
 }
@@ -321,7 +321,10 @@ void compileReturnStatement() {
 	writeXML(demand("return"));
 	if (!isTerminal(tokens[next], ";"))
 		compileExpression();
+	else
+		writeVM("push constant 0");
 	writeXML(demand(";"));
+	writeVM("return");
 	--indentation;
 	writeIndented("</returnStatement>\r\n");
 }
@@ -332,6 +335,7 @@ void compileDoStatement() {
 	writeXML(demand("do"));
 	compileSubroutineCall();
 	writeXML(demand(";"));
+	writeVM("pop temp 0"); // in a do statement, we don't use the return value
 	--indentation;
 	writeIndented("</doStatement>\r\n");
 }
@@ -340,12 +344,17 @@ void compileWhileStatement() {
 	writeIndented("<whileStatement>\r\n");
 	++indentation;
 	writeXML(demand("while"));
+	writeVM(format("label WHILE_EXP%d", whileCount));
 	writeXML(demand("("));
 	compileExpression();
 	writeXML(demand(")"));
+	writeVM("not");
+	writeVM(format("if-goto WHILE_END%d", whileCount));
 	writeXML(demand("{"));
 	compileStatements();
 	writeXML(demand("}"));
+	writeVM(format("goto WHILE_EXP%d", whileCount));
+	writeVM(format("label WHILE_END%d", whileCount));
 	--indentation;
 	writeIndented("</whileStatement>\r\n");
 }
@@ -355,13 +364,14 @@ void compileLetStatement() {
 	++indentation;
 	writeXML(demand("let"));
 	// write the XML for the variable and look it up in the symbol table
-	SymbolTableEntry dest = sts.lookup(writeXML(demand("identifier")).symbol);
+	string destVarName = writeXML(demand("identifier")).symbol;
+	SymbolTableEntry dest = sts.lookup(destVarName);
 	// error check
 	string destVM;
 	if (dest)
 		destVM = dest.vm;
 	else
-		throw new Exception ("Error: symbols not found");
+		throw new Exception (format("Error: symbol '%s' in let statement not found", destVarName));
 	// the identifier might have array brackets following.
 	if (isTerminal(tokens[next], "[")) {
 		writeVM("push " ~ destVM);
@@ -386,15 +396,29 @@ void compileIfStatement() {
 	writeXML(demand("("));
 	compileExpression();
 	writeXML(demand(")"));
+
+	writeVM(format("if-goto IF_TRUE%d", ifStatementCount));
+	writeVM(format("goto IF_FALSE%d", ifStatementCount));
+	writeVM(format("label IF_TRUE%d", ifStatementCount));
+	
+
 	writeXML(demand("{"));
 	compileStatements();
 	writeXML(demand("}"));
+
+	if (isTerminal(tokens[next], "else"))
+		writeVM(format("goto IF_END%d", ifStatementCount));
+	writeVM(format("label IF_FALSE%d", ifStatementCount));
+
 	if (isTerminal(tokens[next], "else")) {
 		writeXML(demand("else"));
 		writeXML(demand("{"));
 		compileStatements();
 		writeXML(demand("}"));
+		writeVM(format("label IF_END%d", ifStatementCount));
 	}
+
+	++ifStatementCount;
 	--indentation;
 	writeIndented("</ifStatement>\r\n");
 }
@@ -442,6 +466,7 @@ void compileClassVarDec(ref int fieldNum, ref int staticNum) {
 	//create the entry in the symbol table
 	if (classVarType == "field") {
 		sts.addSymbol(varName, format("this %d", fieldNum++), type, printAdd);
+		++numClassVars;
 	} else {
 		sts.addSymbol(varName, format("static %s", staticNum++), type, printAdd);
 	}
@@ -450,6 +475,7 @@ void compileClassVarDec(ref int fieldNum, ref int staticNum) {
 		varName = writeXML(demand("identifier")).symbol;
 		if (classVarType == "field") {
 			sts.addSymbol(varName, format("this %d", fieldNum++), type, printAdd);
+			++numClassVars;
 		} else {
 			sts.addSymbol(varName, format("static %s", staticNum++), type, printAdd);
 		}
@@ -476,7 +502,7 @@ void compileSubroutineDec(bool namesOnly = false) {
 				++numParams;
 		--next;
 	} else {
-		compileParameterList();
+		compileParameterList(isMethod);
 	}
 	writeXML(demand(")"));
 	if (namesOnly) {
@@ -484,13 +510,13 @@ void compileSubroutineDec(bool namesOnly = false) {
 		while (next + 1 < tokens.length && !isSubroutineDec(tokens[next]))
 			++next;
 	} else {
-		compileSubroutineBody(funcName);
+		compileSubroutineBody(funcName, funcType);
 	}
 	--indentation;
 	writeIndented("</subroutineDec>\r\n");
 }
 
-void compileSubroutineBody(string funcName) {
+void compileSubroutineBody(string funcName, string funcType) {
 	writeIndented("<subroutineBody>\r\n");
 	++indentation;
 	writeXML(demand("{"));
@@ -500,6 +526,11 @@ void compileSubroutineBody(string funcName) {
 		compileVarDec(numVars);
 	}
 	writeVM(format("function %s.%s %s", className, funcName, numVars));
+	if (funcType == "constructor") {
+		writeVM([format("push constant %d", numClassVars), "call Memory.alloc 1", "pop pointer 0"]);
+	} else if (funcType == "method") {
+		writeVM(["push argument 0", "pop pointer 0"]);
+	}
 	compileStatements();
 	writeXML(demand("}"));
 	if (printStack) {
@@ -535,16 +566,18 @@ void main(string[] args) {
 	jt.init();
 	for (int i=1; i<args.length; ++i) {
 		string filenameRoot = args[i].split(".")[$-2];
-		jt.prepareLexWrite(args[i], filenameRoot ~ "T.xml");
+		jt.prepare(args[i]);
+		jt.lex();
+		//jt.prepareLexWrite(args[i], filenameRoot ~ "T.xml");
 		tokens = jt.getTokens();
 		outputLines = [];
 		next = 0;
 		compileClass();
-		//auto outputFile = File(filenameRoot ~ ".xml", "w");
+		auto outputFile = File(filenameRoot ~ ".vm", "w");
 		//foreach(str; outputLines)
 		//	outputFile.write(str);
-		//outputFile.close();
+		foreach(line; outputVM)
+			outputFile.writeln(line);
+		outputFile.close();
 	}
-	foreach(line; outputVM)
-		writeln(line);
 }
